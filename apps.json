@@ -1,50 +1,10 @@
 [
   {
     "url": "https://github.com/frappe/erpnext",
-    "branch": "version-15"
+    "branch": "version-16"
   },
   {
     "url": "https://github.com/frappe/hrms",
-    "branch": "version-15"
-  },
-  {
-    "url": "https://github.com/frappe/payments",
-    "branch": "version-15"
-  },
-  {
-    "url": "https://github.com/frappe/crm",
-    "branch": "main"
-  },
-  {
-    "url": "https://github.com/frappe/helpdesk",
-    "branch": "main"
-  },
-  {
-    "url": "https://github.com/frappe/insights",
-    "branch": "main"
-  },
-  {
-    "url": "https://github.com/frappe/drive",
-    "branch": "main"
-  },
-  {
-    "url": "https://github.com/frappe/builder",
-    "branch": "main"
-  },
-  {
-    "url": "https://github.com/frappe/lms",
-    "branch": "main"
-  },
-  {
-    "url": "https://github.com/frappe/wiki",
-    "branch": "main"
-  },
-  {
-    "url": "https://github.com/frappe/gameplan",
-    "branch": "main"
-  },
-  {
-    "url": "https://github.com/frappe/print_designer",
-    "branch": "main"
+    "branch": "version-16"
   }
 ]

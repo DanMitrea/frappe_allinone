@@ -1,0 +1,190 @@
+x-customizable-image: &customizable_image
+  image: ${IMAGE_NAME:-ghcr.io/danmitrea/frappe_allinone}:${VERSION:-latest}
+  pull_policy: ${PULL_POLICY:-always}
+
+x-depends-on-configurator: &depends_on_configurator
+  depends_on:
+    configurator:
+      condition: service_completed_successfully
+
+x-backend-defaults: &backend_defaults
+  <<: [*depends_on_configurator, *customizable_image]
+  volumes:
+    - sites:/home/frappe/frappe-bench/sites
+    - logs:/home/frappe/frappe-bench/logs
+
+services:
+  configurator:
+    <<: *customizable_image
+    entrypoint:
+      - bash
+      - -c
+    command:
+      - >
+        ls -1 apps > sites/apps.txt;
+        bench set-config -g db_host $$DB_HOST;
+        bench set-config -gp db_port $$DB_PORT;
+        bench set-config -g redis_cache "redis://$$REDIS_CACHE";
+        bench set-config -g redis_queue "redis://$$REDIS_QUEUE";
+        bench set-config -g redis_socketio "redis://$$REDIS_QUEUE";
+        bench set-config -gp socketio_port $$SOCKETIO_PORT;
+    environment:
+      DB_HOST: ${DB_HOST:-db}
+      DB_PORT: ${DB_PORT:-3306}
+      REDIS_CACHE: ${REDIS_CACHE:-redis-cache:6379}
+      REDIS_QUEUE: ${REDIS_QUEUE:-redis-queue:6379}
+      SOCKETIO_PORT: "9000"
+    volumes:
+      - sites:/home/frappe/frappe-bench/sites
+      - logs:/home/frappe/frappe-bench/logs
+    networks:
+      - dokploy-network
+
+  create-site:
+    <<: *customizable_image
+    deploy:
+      restart_policy:
+        condition: none
+    entrypoint:
+      - bash
+      - -c
+    command:
+      - >
+        wait-for-it -t 120 db:3306;
+        wait-for-it -t 120 redis-cache:6379;
+        wait-for-it -t 120 redis-queue:6379;
+        export start=`date +%s`;
+        until [[ -n `grep -hs ^ sites/common_site_config.json | jq -r ".db_host // empty"` ]] && \
+          [[ -n `grep -hs ^ sites/common_site_config.json | jq -r ".redis_cache // empty"` ]] && \
+          [[ -n `grep -hs ^ sites/common_site_config.json | jq -r ".redis_queue // empty"` ]];
+        do
+          echo "Waiting for sites/common_site_config.json to be created";
+          sleep 5;
+          if (( `date +%s`-start > 120 )); then
+            echo "could not find sites/common_site_config.json with required keys";
+            exit 1
+          fi
+        done;
+        echo "sites/common_site_config.json found";
+        bench new-site --mariadb-root-password=$$MYSQL_ROOT_PASSWORD --admin-password=$$ADMIN_PASSWORD --no-mariadb-socket $$SITE_NAME ${INSTALL_APP_ARGS};
+        echo "Scheduler is disabled";
+    environment:
+      SITE_NAME: ${SITE_NAME:-frappe.localhost}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
+      INSTALL_APP_ARGS: ${INSTALL_APP_ARGS:---install-app erpnext}
+    volumes:
+      - sites:/home/frappe/frappe-bench/sites
+      - logs:/home/frappe/frappe-bench/logs
+    depends_on:
+      configurator:
+        condition: service_completed_successfully
+    networks:
+      - dokploy-network
+
+  backend:
+    <<: *backend_defaults
+    networks:
+      - dokploy-network
+
+  frontend:
+    <<: *customizable_image
+    command:
+      - nginx-entrypoint.sh
+    environment:
+      BACKEND: backend:8000
+      FRAPPE_SITE_NAME_HEADER: ${SITE_NAME:-frappe.localhost}
+      SOCKETIO: websocket:9000
+      UPSTREAM_REAL_IP_ADDRESS: 127.0.0.1
+      UPSTREAM_REAL_IP_HEADER: X-Forwarded-For
+      UPSTREAM_REAL_IP_RECURSIVE: "off"
+      PROXY_READ_TIMEOUT: ${PROXY_READ_TIMEOUT:-120}
+      CLIENT_MAX_BODY_SIZE: ${CLIENT_MAX_BODY_SIZE:-50m}
+    volumes:
+      - sites:/home/frappe/frappe-bench/sites
+      - logs:/home/frappe/frappe-bench/logs
+    depends_on:
+      backend:
+        condition: service_started
+      websocket:
+        condition: service_started
+    networks:
+      - dokploy-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.frappe-allinone.rule=Host(`${SITE_NAME:-frappe.localhost}`)"
+      - "traefik.http.routers.frappe-allinone.entrypoints=websecure"
+      - "traefik.http.routers.frappe-allinone.tls.certResolver=letsencrypt"
+      - "traefik.http.services.frappe-allinone.loadbalancer.server.port=8080"
+
+  websocket:
+    <<: [*depends_on_configurator, *customizable_image]
+    command:
+      - node
+      - /home/frappe/frappe-bench/apps/frappe/socketio.js
+    volumes:
+      - sites:/home/frappe/frappe-bench/sites
+      - logs:/home/frappe/frappe-bench/logs
+    networks:
+      - dokploy-network
+
+  queue-short:
+    <<: *backend_defaults
+    command: bench worker --queue short
+    networks:
+      - dokploy-network
+
+  queue-long:
+    <<: *backend_defaults
+    command: bench worker --queue long
+    networks:
+      - dokploy-network
+
+  queue-default:
+    <<: *backend_defaults
+    command: bench worker --queue default
+    networks:
+      - dokploy-network
+
+  scheduler:
+    <<: *backend_defaults
+    command: bench schedule
+    networks:
+      - dokploy-network
+
+  db:
+    image: mariadb:10.6
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --skip-character-set-client-handshake
+      - --skip-innodb-read-only-compressed
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-admin}
+    volumes:
+      - db-data:/var/lib/mysql
+    networks:
+      - dokploy-network
+    healthcheck:
+      test: mysqladmin ping -h localhost --password=${MYSQL_ROOT_PASSWORD:-admin}
+      interval: 1s
+      retries: 20
+
+  redis-cache:
+    image: redis:alpine
+    networks:
+      - dokploy-network
+
+  redis-queue:
+    image: redis:alpine
+    networks:
+      - dokploy-network
+
+volumes:
+  db-data:
+  sites:
+  logs:
+
+networks:
+  dokploy-network:
+    external: true

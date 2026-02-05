@@ -1,0 +1,102 @@
+name: Build and Push Frappe All-in-One Image
+
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    # Rebuild weekly on Sunday at 2:00 UTC to get latest updates
+    - cron: '0 2 * * 0'
+  workflow_dispatch:
+    inputs:
+      frappe_version:
+        description: 'Frappe Framework version/branch'
+        required: false
+        default: 'version-16'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Checkout frappe_docker
+        uses: actions/checkout@v4
+        with:
+          repository: frappe/frappe_docker
+          path: frappe_docker
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare apps.json
+        run: |
+          # Copy apps.json to frappe_docker directory
+          cp apps.json frappe_docker/apps.json
+          
+          # Generate base64 encoded apps.json
+          export APPS_JSON_BASE64=$(base64 -w 0 frappe_docker/apps.json)
+          echo "APPS_JSON_BASE64=$APPS_JSON_BASE64" >> $GITHUB_ENV
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=raw,value=v16
+            type=sha,prefix=
+            type=raw,value={{date 'YYYYMMDD'}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: frappe_docker
+          file: frappe_docker/images/custom/Containerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            FRAPPE_PATH=https://github.com/frappe/frappe
+            FRAPPE_BRANCH=${{ github.event.inputs.frappe_version || 'version-16' }}
+            PYTHON_VERSION=3.11.6
+            NODE_VERSION=18.18.2
+            APPS_JSON_BASE64=${{ env.APPS_JSON_BASE64 }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Generate build summary
+        run: |
+          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Included Apps:" >> $GITHUB_STEP_SUMMARY
+          echo "- ERPNext (version-16)" >> $GITHUB_STEP_SUMMARY
+          echo "- Frappe HR (version-16)" >> $GITHUB_STEP_SUMMARY
+          echo "- Frappe CRM" >> $GITHUB_STEP_SUMMARY
+          echo "- Frappe Helpdesk" >> $GITHUB_STEP_SUMMARY
+          echo "- Frappe Insights" >> $GITHUB_STEP_SUMMARY
+          echo "- Frappe Drive" >> $GITHUB_STEP_SUMMARY
+          echo "- Frappe Builder" >> $GITHUB_STEP_SUMMARY
+          echo "- Frappe LMS" >> $GITHUB_STEP_SUMMARY
+          echo "- Frappe Wiki" >> $GITHUB_STEP_SUMMARY
+          echo "- Frappe Gameplan" >> $GITHUB_STEP_SUMMARY
+          echo "- Print Designer" >> $GITHUB_STEP_SUMMARY

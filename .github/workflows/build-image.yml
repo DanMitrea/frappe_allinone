@@ -76,7 +76,7 @@ jobs:
           build-args: |
             FRAPPE_PATH=https://github.com/frappe/frappe
             FRAPPE_BRANCH=${{ github.event.inputs.frappe_version || 'version-16' }}
-            PYTHON_VERSION=3.12.9
+            PYTHON_VERSION=3.14.0
             NODE_VERSION=18.18.2
             APPS_JSON_BASE64=${{ env.APPS_JSON_BASE64 }}
           cache-from: type=gha
